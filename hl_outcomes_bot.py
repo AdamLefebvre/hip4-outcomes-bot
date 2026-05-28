@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """
 Hyperliquid HIP-4 Outcomes Farming Bot
-Volume-farming sur les marchés binaires pour un potentiel Airdrop 2.
+Volume-farming on binary markets for potential Airdrop 2.
 
-Stratégie :
-  • Limit-buy 10 USDH au mid-price (ordres limit = 0 frais)
-  • Take-profit à +5 %
-  • DCA si -10 % (2 legs max)
-  • Hard-stop à -35 %
-  • Recommence immédiatement après chaque clôture
-  • Auto-détecte le nouveau marché chaque jour
+Strategy:
+  • Limit-buy 10 USDH at mid-price (limit orders = 0 fees)
+  • Take-profit at +5%
+  • DCA if -10% (2 legs max)
+  • Hard-stop at -35%
+  • Restarts immediately after each close
+  • Auto-detects the new market each day
 
-Usage :
-  python hl_outcomes_bot.py                 # lance le bot
-  python hl_outcomes_bot.py --list-markets  # affiche les marchés Outcome actifs
+Usage:
+  python hl_outcomes_bot.py                 # run the bot
+  python hl_outcomes_bot.py --list-markets  # display active Outcome markets
 """
 
 import math
@@ -40,7 +40,7 @@ try:
     from dotenv import load_dotenv
 except ImportError:
     sys.exit(
-        "Dépendances manquantes. Lance :\n"
+        "Missing dependencies. Run:\n"
         "  pip install hyperliquid-python-sdk eth-account python-dotenv requests"
     )
 
@@ -58,29 +58,29 @@ API = constants.MAINNET_API_URL
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  CONFIG — modifie uniquement cette section
+#  CONFIG — edit only this section
 # ═══════════════════════════════════════════════════════════════════════════════
 
 PRIVATE_KEY = os.getenv("PRIVATE_KEY", "")
 
-# Côté à trader : "YES" (bullish BTC) ou "NO" (bearish BTC)
-# Le coin exact (#NNN) est auto-détecté chaque jour depuis outcomeMeta.
+# Side to trade: "YES" (bullish BTC) or "NO" (bearish BTC)
+# The exact coin (#NNN) is auto-detected each day from outcomeMeta.
 SIDE = "NO"
 
-BASE_USDH        = 10.0   # USDH par leg (≈ 10 €)
-TAKE_PROFIT_PCT  = 0.05   # vend à +5 %
-DCA_TRIGGER_PCT  = -0.10  # DCA à -10 %
-HARD_STOP_PCT    = -0.35  # coupe tout à -35 %
-MAX_DCA_LEGS     = 2      # max 2 DCA supplémentaires (3 legs total)
+BASE_USDH        = 10.0   # USDH per leg (≈ 10 $)
+TAKE_PROFIT_PCT  = 0.05   # sell at +5%
+DCA_TRIGGER_PCT  = -0.10  # DCA at -10%
+HARD_STOP_PCT    = -0.35  # cut everything at -35%
+MAX_DCA_LEGS     = 2      # max 2 additional DCA legs (3 legs total)
 
-ORDER_FILL_TIMEOUT = 90   # secondes pour attendre un fill
-POLL_SEC           = 20   # intervalle de vérification de position
+ORDER_FILL_TIMEOUT = 90   # seconds to wait for a fill
+POLL_SEC           = 20   # position check interval
 
-REENTRY_PULLBACK_PCT = 0.02   # attend -2% depuis le prix de vente avant re-entrée
-REENTRY_TIMEOUT      = 300    # secondes max d'attente de pullback (5 min)
-SLIPPAGE_BPS       = 15   # bps de slippage sur le prix limite
+REENTRY_PULLBACK_PCT = 0.02   # wait for -2% from sell price before re-entry
+REENTRY_TIMEOUT      = 300    # max seconds to wait for pullback (5 min)
+SLIPPAGE_BPS       = 15   # slippage in bps on limit price
 
-ROUNDS = 0                # 0 = tourne indéfiniment
+ROUNDS = 0                # 0 = run indefinitely
 
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -115,7 +115,7 @@ class Position:
         )
 
 
-# ── CONNEXION ─────────────────────────────────────────────────────────────────
+# ── CONNECTION ────────────────────────────────────────────────────────────────
 
 def setup() -> Tuple[Info, Exchange, str]:
     account: LocalAccount = eth_account.Account.from_key(PRIVATE_KEY)
@@ -124,10 +124,10 @@ def setup() -> Tuple[Info, Exchange, str]:
     return info, exchange, account.address
 
 
-# ── AUTO-DÉTECTION DU MARCHÉ ──────────────────────────────────────────────────
+# ── AUTO-DETECT MARKET ────────────────────────────────────────────────────────
 
 def get_active_coin(side: str = "YES") -> Optional[str]:
-    """Retourne le coin (#NNN) du marché priceBinary BTC actif."""
+    """Returns the coin (#NNN) for the active priceBinary BTC market."""
     try:
         r = requests.post(API + "/info", json={"type": "outcomeMeta"}, timeout=5)
         meta = r.json()
@@ -143,62 +143,62 @@ def get_active_coin(side: str = "YES") -> Optional[str]:
                 if spec["name"].upper() == side.upper():
                     coin = f"#{oid * 10 + idx}"
                     log.info(
-                        f"Marché actif : {coin} ({spec['name']}) | "
+                        f"Active market: {coin} ({spec['name']}) | "
                         f"{outcome['description']}"
                     )
                     return coin
 
-    log.warning("Aucun marché priceBinary BTC actif trouvé dans outcomeMeta.")
+    log.warning("No active priceBinary BTC market found in outcomeMeta.")
     return None
 
 
 # ── MARKET DATA ───────────────────────────────────────────────────────────────
 
 def debug_outcome_market() -> None:
-    """Diagnostique l'asset_id correct pour les coins Outcome #NNN."""
+    """Diagnoses the correct asset_id for Outcome #NNN coins."""
     import json
 
-    coin = "#750"  # le coin actif
+    coin = "#750"  # active coin
 
-    # 1. spotMeta complet — universe count + tokens count
+    # 1. Full spotMeta — universe count + tokens count
     sm = requests.post(API + "/info", json={"type": "spotMeta"}, timeout=10).json()
     univ   = sm.get("universe", [])
     tokens = sm.get("tokens", [])
-    print(f"\n══ spotMeta : {len(univ)} marchés, {len(tokens)} tokens ══")
-    # cherche tokens avec # ou 'outcome' ou 'yes'/'no' dans le nom
+    print(f"\n══ spotMeta: {len(univ)} markets, {len(tokens)} tokens ══")
+    # look for tokens with # or 'outcome' or 'yes'/'no' in the name
     for t in tokens:
         n = t.get("name", "")
         if "#" in n or n.lower() in ("yes", "no") or "outcome" in n.lower():
             print(f"  TOKEN: {t}")
-    # cherche marchés avec index élevé (> 450)
+    # look for markets with high index (> 450)
     high_idx = [u for u in univ if u.get("index", 0) > 450]
-    print(f"  Marchés spot avec index > 450 : {high_idx[:10]}")
+    print(f"  Spot markets with index > 450: {high_idx[:10]}")
 
-    # 2. spotMetaAndAssetCtxs — compte les ctxs vs univers
+    # 2. spotMetaAndAssetCtxs — compare ctx count vs universe
     sma = requests.post(API + "/info", json={"type": "spotMetaAndAssetCtxs"}, timeout=10).json()
     su = sma[0].get("universe", []) if isinstance(sma, list) else []
     sc = sma[1] if isinstance(sma, list) and len(sma) > 1 else []
-    print(f"\n══ spotMetaAndAssetCtxs : {len(su)} marchés, {len(sc)} ctxs ══")
-    # si plus de ctxs que de marchés, les entrées extra pourraient être des outcomes
+    print(f"\n══ spotMetaAndAssetCtxs: {len(su)} markets, {len(sc)} ctxs ══")
+    # extra ctxs beyond markets may be outcomes
     if len(sc) > len(su):
-        print(f"  ⚠ {len(sc) - len(su)} ctx sans marché correspondant !")
+        print(f"  ⚠ {len(sc) - len(su)} ctx(s) without a matching market!")
         for i in range(len(su), min(len(su)+20, len(sc))):
             print(f"    ctx[{i}] = {sc[i]}")
 
-    # 3. perpDexs — tous les dexes disponibles
+    # 3. perpDexs — all available dexes
     try:
         dexs = requests.post(API + "/info", json={"type": "perpDexs"}, timeout=5).json()
         print(f"\n══ perpDexs ══")
         print(json.dumps(dexs[:5] if isinstance(dexs, list) else dexs, indent=2))
     except Exception as e:
-        print(f"\n══ perpDexs erreur : {e} ══")
+        print(f"\n══ perpDexs error: {e} ══")
 
-    # 4. allMids — tous les coins #NNN
+    # 4. allMids — all #NNN coins
     mids = requests.post(API + "/info", json={"type": "allMids"}, timeout=5).json()
     hash_mids = {k: v for k, v in mids.items() if k.startswith("#")}
-    print(f"\n══ allMids : {len(hash_mids)} coins #NNN → {hash_mids} ══")
+    print(f"\n══ allMids: {len(hash_mids)} #NNN coins → {hash_mids} ══")
 
-    # 5. Toutes les balances spot du wallet
+    # 5. All spot balances for the wallet
     wallet_addr = eth_account.Account.from_key(os.getenv("PRIVATE_KEY", "")).address
     sus = requests.post(API + "/info", json={"type": "spotClearinghouseState", "user": wallet_addr}, timeout=5).json()
     balances = sus.get("balances", [])
@@ -206,7 +206,7 @@ def debug_outcome_market() -> None:
     for b in balances:
         print(f"  {b}")
 
-    # 6. Marge perp du wallet
+    # 6. Perp margin for the wallet
     cs = requests.post(API + "/info", json={"type": "clearinghouseState", "user": wallet_addr}, timeout=5).json()
     margin = cs.get("crossMarginSummary", {})
     print(f"\n══ Perp margin ══")
@@ -214,15 +214,15 @@ def debug_outcome_market() -> None:
 
 
 def list_outcome_markets() -> None:
-    """Affiche les marchés Outcome HIP-4 actifs avec leurs coins et prix."""
+    """Displays active HIP-4 Outcome markets with their coins and prices."""
     try:
         meta = requests.post(API + "/info", json={"type": "outcomeMeta"}, timeout=5).json()
         mids = requests.post(API + "/info", json={"type": "allMids"}, timeout=5).json()
     except Exception as e:
-        print(f"Erreur: {e}")
+        print(f"Error: {e}")
         return
 
-    print("\n═══ Marchés Outcome HIP-4 actifs ═══\n")
+    print("\n═══ Active HIP-4 Outcome markets ═══\n")
 
     for outcome in meta.get("outcomes", []):
         oid   = outcome["outcome"]
@@ -243,11 +243,11 @@ def list_outcome_markets() -> None:
             print(f"    → COIN={coin_key!r:<10}  side={spec['name']:<5}  mid={mid}")
         print()
 
-    print("─── Le bot auto-détecte le bon coin via SIDE = \"YES\" ou \"NO\" ───\n")
+    print("─── The bot auto-detects the right coin via SIDE = \"YES\" or \"NO\" ───\n")
 
 
 def get_book(coin: str) -> Tuple[Optional[float], Optional[float]]:
-    """Retourne (best_bid, best_ask) via appel API direct."""
+    """Returns (best_bid, best_ask) via direct API call."""
     try:
         r = requests.post(
             API + "/info",
@@ -284,29 +284,29 @@ def rp(x: float, d: int = 5) -> float:
 
 
 def _fw(x: float) -> str:
-    """float → wire string (même logique que le SDK Hyperliquid)."""
+    """float → wire string (same logic as the Hyperliquid SDK)."""
     r = round(x, 8)
     if abs(r) < 1e-12:
         return "0"
     return f"{r:g}"
 
 
-# ── ORDRES : EIP-712 signing + _post_action ───────────────────────────────────
+# ── ORDERS: EIP-712 signing + _post_action ────────────────────────────────────
 #
-# exchange.order() utilise info.name_to_asset() qui ne connaît pas les coins
-# #NNN (Outcome). On bypasse le lookup en passant l'asset_id = int(N) directement,
-# puis on signe manuellement avec sign_l1_action et on poste via _post_action.
+# exchange.order() uses info.name_to_asset() which doesn't know #NNN coins
+# (Outcome). We bypass the lookup by passing asset_id = int(N) directly,
+# then sign manually with sign_l1_action and post via _post_action.
 
 def _is_mainnet(exchange: Exchange) -> bool:
     return exchange.base_url == constants.MAINNET_API_URL
 
 
 def _load_outcome_asset_cache() -> None:
-    pass  # plus nécessaire, la formule est directe
+    pass  # no longer needed, the formula is direct
 
 
 def _outcome_asset_id(coin: str) -> int:
-    """HIP-4 asset_id = 100_000_000 + NNN où coin = '#NNN'."""
+    """HIP-4 asset_id = 100_000_000 + NNN where coin = '#NNN'."""
     return 100_000_000 + int(coin.lstrip("#"))
 
 
@@ -317,7 +317,7 @@ def _place_order(
     sz: float,
     px: float,
 ) -> dict:
-    """Signe et poste un ordre limit pour un coin Outcome (#NNN)."""
+    """Signs and posts a limit order for an Outcome coin (#NNN)."""
     asset_id = _outcome_asset_id(coin)
     order_wire = order_request_to_order_wire(
         {
@@ -344,7 +344,7 @@ def _place_order(
 
 
 def _cancel_order(exchange: Exchange, coin: str, oid: int) -> dict:
-    """Annule un ordre Outcome avec signature EIP-712."""
+    """Cancels an Outcome order with EIP-712 signature."""
     asset_id = _outcome_asset_id(coin)
     action    = {
         "type": "cancel",
@@ -363,7 +363,7 @@ def _cancel_order(exchange: Exchange, coin: str, oid: int) -> dict:
 
 
 def _open_orders(address: str) -> list:
-    """Récupère les ordres ouverts via API directe."""
+    """Fetches open orders via direct API call."""
     try:
         r = requests.post(
             API + "/info",
@@ -384,7 +384,7 @@ def _extract_oid(result: dict) -> Optional[int]:
         if "resting" in status:
             return status["resting"]["oid"]
         if "filled" in status:
-            return None  # filled immédiatement
+            return None  # filled immediately
     except ValueError:
         raise
     except (KeyError, IndexError, TypeError):
@@ -393,7 +393,7 @@ def _extract_oid(result: dict) -> Optional[int]:
 
 
 def _wait_fill(address: str, coin: str, oid: int) -> bool:
-    """Attend que l'ordre ne soit plus dans les ordres ouverts."""
+    """Waits until the order is no longer in open orders."""
     deadline = time.time() + ORDER_FILL_TIMEOUT
     while time.time() < deadline:
         time.sleep(5)
@@ -411,14 +411,14 @@ def limit_buy(
     coin: str,
     usdh: float,
 ) -> Optional[Tuple[float, float]]:
-    """Retourne (fill_price, qty) ou None."""
+    """Returns (fill_price, qty) or None."""
     _, ask = get_book(coin)
     if ask is None:
-        log.error("Pas d'ask disponible — marché inexistant ou expiré ?")
+        log.error("No ask available — market missing or expired?")
         return None
 
     px  = rp(min(ask + bps_of(ask, SLIPPAGE_BPS), 1.0))
-    qty = max(1, math.ceil(usdh * 1.05 / px))  # +5% buffer → valeur serveur ≥ 10 USDH même si mid bouge
+    qty = max(1, math.ceil(usdh * 1.05 / px))  # +5% buffer so server value >= 10 USDH even if mid moves
     log.info(f"  → BUY  {qty} {coin} @ {px:.5f}  ({usdh:.2f} USDH)")
 
     try:
@@ -427,27 +427,27 @@ def limit_buy(
         log.error(f"limit_buy exception: {exc}")
         return None
 
-    log.info(f"  Réponse: {result}")
+    log.info(f"  Response: {result}")
     if result.get("status") != "ok":
-        log.error(f"Ordre refusé: {result}")
+        log.error(f"Order rejected: {result}")
         return None
 
     try:
         oid = _extract_oid(result)
     except ValueError as exc:
-        log.error(f"  Ordre refusé par le serveur: {exc}")
+        log.error(f"  Order rejected by server: {exc}")
         return None
 
     if oid is None:
-        log.info("  Filled immédiatement ✓")
+        log.info("  Filled immediately ✓")
         return px, qty
 
-    log.info(f"  En attente (oid={oid})…")
+    log.info(f"  Waiting (oid={oid})…")
     if _wait_fill(address, coin, oid):
         log.info(f"  Filled ✓")
         return px, qty
 
-    log.warning(f"  Timeout — annulation oid={oid}")
+    log.warning(f"  Timeout — cancelling oid={oid}")
     try:
         _cancel_order(exchange, coin, oid)
     except Exception:
@@ -464,12 +464,12 @@ def limit_sell(
     _retry: int = 0,
 ) -> bool:
     if _retry > 3:
-        log.error("Échec de vente après 3 tentatives.")
+        log.error("Sell failed after 3 attempts.")
         return False
 
     bid, _ = get_book(coin)
     if bid is None:
-        log.error("Pas de bid disponible.")
+        log.error("No bid available.")
         return False
 
     px = rp(target_px if target_px is not None else max(bid - bps_of(bid, SLIPPAGE_BPS), 0.0001))
@@ -481,27 +481,27 @@ def limit_sell(
         log.error(f"limit_sell exception: {exc}")
         return False
 
-    log.info(f"  Réponse: {result}")
+    log.info(f"  Response: {result}")
     if result.get("status") != "ok":
-        log.error(f"Sell refusé: {result}")
+        log.error(f"Sell rejected: {result}")
         return False
 
     try:
         oid = _extract_oid(result)
     except ValueError as exc:
-        log.error(f"  Sell refusé par le serveur: {exc}")
+        log.error(f"  Sell rejected by server: {exc}")
         return False
 
     if oid is None:
-        log.info("  Sold immédiatement ✓")
+        log.info("  Sold immediately ✓")
         return True
 
-    log.info(f"  En attente (oid={oid})…")
+    log.info(f"  Waiting (oid={oid})…")
     if _wait_fill(address, coin, oid):
         log.info("  Sold ✓")
         return True
 
-    log.warning("  Sell timeout — relance au bid actuel")
+    log.warning("  Sell timeout — retrying at current bid")
     try:
         _cancel_order(exchange, coin, oid)
     except Exception:
@@ -509,14 +509,14 @@ def limit_sell(
     return limit_sell(exchange, address, coin, qty, target_px=None, _retry=_retry + 1)
 
 
-# ── COOLDOWN POST-TP ──────────────────────────────────────────────────────────
+# ── POST-TP COOLDOWN ──────────────────────────────────────────────────────────
 
 def wait_for_pullback(coin: str, sell_px: float) -> None:
-    """Après un TP, attend que le prix repulle de REENTRY_PULLBACK_PCT avant de re-rentrer."""
+    """After a TP, waits for price to pull back REENTRY_PULLBACK_PCT before re-entry."""
     target = sell_px * (1 - REENTRY_PULLBACK_PCT)
     deadline = time.time() + REENTRY_TIMEOUT
     log.info(
-        f"  ⏳ Attente pullback : prix cible ≤ {target:.5f} "
+        f"  ⏳ Waiting for pullback: target price ≤ {target:.5f} "
         f"(timeout {REENTRY_TIMEOUT}s)"
     )
     while time.time() < deadline:
@@ -524,22 +524,22 @@ def wait_for_pullback(coin: str, sell_px: float) -> None:
         price = get_mid(coin)
         if price is None:
             continue
-        log.info(f"  Pullback watch : price={price:.5f}  cible={target:.5f}")
+        log.info(f"  Pullback watch: price={price:.5f}  target={target:.5f}")
         if price <= target:
-            log.info(f"  ✓ Pullback atteint ({price:.5f} ≤ {target:.5f})")
+            log.info(f"  ✓ Pullback reached ({price:.5f} ≤ {target:.5f})")
             return
-    log.info("  Timeout pullback — re-entrée immédiate.")
+    log.info("  Pullback timeout — re-entering immediately.")
 
 
 # ── ROUND ─────────────────────────────────────────────────────────────────────
 
 def run_round(exchange: Exchange, address: str, coin: str, n: int, pullback: bool = True) -> bool:
-    """Retourne True si le round s'est clôturé sur un TP (→ attendre pullback)."""
+    """Returns True if the round closed on a TP (→ wait for pullback)."""
     log.info(f"\n{'═'*56}\n  ROUND {n}  |  {coin}  |  {BASE_USDH:.0f} USDC/leg\n{'═'*56}")
 
     fill = limit_buy(exchange, address, coin, BASE_USDH)
     if fill is None:
-        log.warning("Entrée initiale échouée, pause 30s.")
+        log.warning("Initial entry failed, pausing 30s.")
         time.sleep(30)
         return False
 
@@ -553,7 +553,7 @@ def run_round(exchange: Exchange, address: str, coin: str, n: int, pullback: boo
 
         price = get_mid(coin)
         if price is None:
-            log.warning("Prix indisponible, réessai…")
+            log.warning("Price unavailable, retrying…")
             continue
 
         pnl = pos.pnl_pct(price)
@@ -595,64 +595,64 @@ def main() -> None:
 
     pullback = "--no-pullback" not in sys.argv
     if not pullback:
-        log.info("Mode : re-entrée immédiate après TP (sans pullback)")
+        log.info("Mode: immediate re-entry after TP (no pullback)")
 
     if not PRIVATE_KEY:
-        sys.exit("⚠️  PRIVATE_KEY manquante. Crée un fichier .env avec PRIVATE_KEY=0x...")
+        sys.exit("⚠️  PRIVATE_KEY missing. Create a .env file with PRIVATE_KEY=0x...")
 
     info, exchange, address = setup()
-    log.info(f"Wallet : {address}")
+    log.info(f"Wallet: {address}")
 
-    # Vérification balance USDH en spot (balance libre = total - hold)
+    # Check USDC spot balance (free balance = total - hold)
     sus = requests.post(API + "/info", json={"type": "spotClearinghouseState", "user": address}, timeout=5).json()
-    # Les Outcome markets utilisent USDC comme quote currency (pas USDH)
+    # Outcome markets use USDC as quote currency (not USDH)
     usdc_bal  = next((b for b in sus.get("balances", []) if b.get("coin") == "USDC"), {})
     usdc_free = float(usdc_bal.get("total", 0)) - float(usdc_bal.get("hold", 0))
     min_needed = BASE_USDH * (1 + MAX_DCA_LEGS)
-    log.info(f"Balance USDC spot libre : {usdc_free:.2f} (total={float(usdc_bal.get('total',0)):.2f}  hold={float(usdc_bal.get('hold',0)):.2f}  minimum conseillé : {min_needed:.2f})")
+    log.info(f"Free spot USDC balance: {usdc_free:.2f} (total={float(usdc_bal.get('total',0)):.2f}  hold={float(usdc_bal.get('hold',0)):.2f}  recommended minimum: {min_needed:.2f})")
     if usdc_free < BASE_USDH:
         sys.exit(
-            f"⚠️  Balance USDC spot insuffisante ({usdc_free:.2f} USDC).\n"
-            "   Dépose du USDC directement dans ton wallet spot HL (pas en perp margin).\n"
-            "   Sur l'UI : Portfolio → Transfer → Deposit to Spot."
+            f"⚠️  Insufficient spot USDC balance ({usdc_free:.2f} USDC).\n"
+            "   Deposit USDC directly to your HL spot wallet (not perp margin).\n"
+            "   On the UI: Portfolio → Transfer → Deposit to Spot."
         )
 
-    # Annulation des ordres outcome stale au démarrage
+    # Cancel stale outcome orders on startup
     open_ords = _open_orders(address)
     outcome_ords = [o for o in open_ords if str(o.get("coin", "")).startswith("#")]
     if outcome_ords:
-        log.info(f"Annulation de {len(outcome_ords)} ordre(s) outcome stale…")
+        log.info(f"Cancelling {len(outcome_ords)} stale outcome order(s)…")
         for o in outcome_ords:
             try:
                 _cancel_order(exchange, o["coin"], o["oid"])
-                log.info(f"  Annulé oid={o['oid']} coin={o['coin']}")
+                log.info(f"  Cancelled oid={o['oid']} coin={o['coin']}")
             except Exception as exc:
-                log.warning(f"  Échec annulation oid={o['oid']}: {exc}")
+                log.warning(f"  Failed to cancel oid={o['oid']}: {exc}")
 
-    # Auto-détection du marché actif
+    # Auto-detect active market
     coin = get_active_coin(SIDE)
     if coin is None:
-        sys.exit("Aucun marché Outcome actif trouvé. Réessaie plus tard.")
+        sys.exit("No active Outcome market found. Try again later.")
 
     mid = get_mid(coin)
     if mid is None:
-        sys.exit(f"Impossible d'obtenir le prix de '{coin}'. Marché expiré ou vide ?")
-    log.info(f"Mid price {coin} ({SIDE}) : {mid:.5f}")
+        sys.exit(f"Cannot get price for '{coin}'. Market expired or empty?")
+    log.info(f"Mid price {coin} ({SIDE}): {mid:.5f}")
 
     round_n  = 0
     last_day = time.strftime("%Y%m%d")
 
     try:
         while ROUNDS == 0 or round_n < ROUNDS:
-            # Renouvellement quotidien du coin
+            # Daily coin refresh
             today = time.strftime("%Y%m%d")
             if today != last_day:
-                log.info("Nouveau jour — re-détection du marché actif…")
+                log.info("New day — re-detecting active market…")
                 new_coin = get_active_coin(SIDE)
                 if new_coin and new_coin != coin:
                     coin     = new_coin
                     last_day = today
-                    log.info(f"Nouveau coin : {coin}")
+                    log.info(f"New coin: {coin}")
 
             round_n += 1
             try:
@@ -660,13 +660,13 @@ def main() -> None:
             except KeyboardInterrupt:
                 raise
             except Exception as exc:
-                log.exception(f"Round {round_n} erreur: {exc}")
-                log.info("Pause 60s avant le prochain round…")
+                log.exception(f"Round {round_n} error: {exc}")
+                log.info("Pausing 60s before next round…")
                 time.sleep(60)
     except KeyboardInterrupt:
-        log.info("\nBot arrêté par l'utilisateur.")
+        log.info("\nBot stopped by user.")
 
-    log.info("Bot terminé.")
+    log.info("Bot finished.")
 
 
 if __name__ == "__main__":
